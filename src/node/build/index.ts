@@ -98,6 +98,9 @@ export function onRollupWarning(
           `If you do want to externalize this module explicitly add it to\n` +
           `\`rollupInputOptions.external\``
       }
+      if (spinner) {
+        spinner.stop()
+      }
       throw new Error(message)
     }
     if (
@@ -144,8 +147,6 @@ export async function createBaseRollupPlugins(
   const dynamicImport = require('rollup-plugin-dynamic-import-variables')
 
   return [
-    // user plugins
-    ...(rollupInputOptions.plugins || []),
     // vite:resolve
     createBuildResolvePlugin(root, resolver),
     // vite:esbuild
@@ -178,7 +179,9 @@ export async function createBaseRollupPlugins(
       warnOnError: true,
       include: [/\.js$/],
       exclude: [/node_modules/]
-    })
+    }),
+    // #728 user plugins should apply after `@rollup/plugin-commonjs`
+    ...(rollupInputOptions.plugins || [])
   ].filter(Boolean)
 }
 
@@ -254,16 +257,15 @@ export async function build(options: BuildConfig): Promise<BuildResult> {
     emitAssets = true,
     write = true,
     minify = true,
-    // default build transpile target is es2019 so that it transpiles
-    // optional chaining which terser doesn't handle yet
-    esbuildTarget = 'es2019',
+    terserOption = {},
+    esbuildTarget = 'es2020',
     enableEsbuild = true,
     silent = false,
     sourcemap = false,
     shouldPreload = null,
     env = {},
     mode: configMode = 'production',
-    define: userDefineReplacements,
+    define: userDefineReplacements = {},
     cssPreprocessOptions,
     cssModuleOptions = {}
   } = options
@@ -273,7 +275,7 @@ export async function build(options: BuildConfig): Promise<BuildResult> {
   const start = Date.now()
 
   let spinner: Ora | undefined
-  const msg = 'Building for production...'
+  const msg = `Building ${configMode} bundle...`
   if (!silent) {
     if (process.env.DEBUG || isTest) {
       console.log(msg)
@@ -281,7 +283,7 @@ export async function build(options: BuildConfig): Promise<BuildResult> {
       spinner = require('ora')(msg + '\n').start()
     }
   }
-  await fs.remove(outDir)
+  await fs.emptyDir(outDir)
 
   const indexPath = path.resolve(root, 'index.html')
   const publicBasePath = base.replace(/([^/])$/, '$1/') // ensure ending slash
@@ -338,6 +340,9 @@ export async function build(options: BuildConfig): Promise<BuildResult> {
     builtInEnvReplacements[`import.meta.env.${key}`] = JSON.stringify(
       builtInClientEnv[key as keyof typeof builtInClientEnv]
     )
+  })
+  Object.keys(userDefineReplacements).forEach((key) => {
+    userDefineReplacements[key] = JSON.stringify(userDefineReplacements[key])
   })
 
   // lazy require rollup so that we don't load it when only using the dev server
@@ -407,7 +412,7 @@ export async function build(options: BuildConfig): Promise<BuildResult> {
       // the user can opt-in to use esbuild which is much faster but results
       // in ~8-10% larger file size.
       minify && minify !== 'esbuild'
-        ? require('rollup-plugin-terser').terser()
+        ? require('rollup-plugin-terser').terser(terserOption)
         : undefined
     ].filter(Boolean)
   })
@@ -509,7 +514,7 @@ export async function build(options: BuildConfig): Promise<BuildResult> {
   }
 
   // stop the esbuild service after each build
-  stopService()
+  await stopService()
 
   return {
     assets: output,

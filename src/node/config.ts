@@ -15,14 +15,18 @@ import Rollup, {
   OutputOptions as RollupOutputOptions,
   OutputChunk
 } from 'rollup'
-import { createEsbuildPlugin } from './build/buildPluginEsbuild'
+import {
+  createEsbuildPlugin,
+  createEsbuildRenderChunkPlugin
+} from './build/buildPluginEsbuild'
 import { ServerPlugin } from './server'
 import { Resolver, supportedExts } from './resolver'
 import { Transform, CustomBlockTransform } from './transform'
 import { DepOptimizationOptions } from './optimizer'
-import { IKoaProxiesOptions } from 'koa-proxies'
 import { ServerOptions } from 'https'
 import { lookupFile } from './utils'
+import { Options as RollupTerserOptions } from 'rollup-plugin-terser'
+import { ProxiesOptions } from './server/serverPluginProxy'
 
 export type PreprocessLang = NonNullable<
   SFCStyleCompileOptions['preprocessLang']
@@ -194,7 +198,7 @@ export interface ServerConfig extends SharedConfig {
    * }
    * ```
    */
-  proxy?: Record<string, string | IKoaProxiesOptions>
+  proxy?: Record<string, string | ProxiesOptions>
   /**
    * A plugin function that configures the dev server. Receives a server plugin
    * context object just like the internal server plguins. Can also be an array
@@ -246,10 +250,12 @@ export interface BuildConfig extends SharedConfig {
    */
   minify?: boolean | 'terser' | 'esbuild'
   /**
+   * The option for `terser`
+   */
+  terserOption?: RollupTerserOptions
+  /**
    * Transpile target for esbuild.
-   * Defaults to 'es2019' which transpiles optional chaining so it works with
-   * terser.
-   * @default 'es2019'
+   * @default 'es2020'
    */
   esbuildTarget?: string
   /**
@@ -396,6 +402,10 @@ export async function resolveConfig(
       // transpile es import syntax to require syntax using rollup.
       const rollup = require('rollup') as typeof Rollup
       const esbuildPlugin = await createEsbuildPlugin({})
+      const esbuildRenderChunkPlugin = createEsbuildRenderChunkPlugin(
+        'es2019',
+        false
+      )
       // use node-resolve to support .ts files
       const nodeResolve = require('@rollup/plugin-node-resolve').nodeResolve({
         extensions: supportedExts
@@ -406,7 +416,7 @@ export async function resolveConfig(
           id.slice(-5, id.length) === '.json',
         input: resolvedPath,
         treeshake: false,
-        plugins: [esbuildPlugin, nodeResolve]
+        plugins: [esbuildPlugin, nodeResolve, esbuildRenderChunkPlugin]
       })
 
       const {
@@ -492,7 +502,7 @@ function resolvePlugin(config: UserConfig, plugin: Plugin): UserConfig {
     },
     transforms: [...(config.transforms || []), ...(plugin.transforms || [])],
     resolvers: [...(config.resolvers || []), ...(plugin.resolvers || [])],
-    configureServer: ([] as any[]).concat(
+    configureServer: ([] as ServerPlugin[]).concat(
       config.configureServer || [],
       plugin.configureServer || []
     ),

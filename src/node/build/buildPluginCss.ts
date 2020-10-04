@@ -17,7 +17,7 @@ import {
 } from '@vue/compiler-sfc'
 import chalk from 'chalk'
 import { CssPreprocessOptions } from '../config'
-import { InternalResolver } from '../resolver'
+import { dataToEsm } from '@rollup/pluginutils'
 
 const debug = require('debug')('vite:build:css')
 
@@ -35,19 +35,16 @@ interface BuildCssOption {
   modulesOptions?: SFCAsyncStyleCompileOptions['modulesOptions']
 }
 
-export const createBuildCssPlugin = (
-  resolver: InternalResolver,
-  {
-    root,
-    publicBase,
-    assetsDir,
-    minify = false,
-    inlineLimit = 0,
-    cssCodeSplit = true,
-    preprocessOptions,
-    modulesOptions = {}
-  }: BuildCssOption
-): Plugin => {
+export const createBuildCssPlugin = ({
+  root,
+  publicBase,
+  assetsDir,
+  minify = false,
+  inlineLimit = 0,
+  cssCodeSplit = true,
+  preprocessOptions,
+  modulesOptions = {}
+}: BuildCssOption): Plugin => {
   const styles: Map<string, string> = new Map()
   const assets = new Map<string, Buffer>()
   let staticCss = ''
@@ -59,15 +56,12 @@ export const createBuildCssPlugin = (
         // if this is a Vue SFC style request, it's already processed by
         // rollup-plugin-vue and we just need to rewrite URLs + collect it
         const isVueStyle = /\?vue&type=style/.test(id)
-        const preprocessLang = id.replace(
-          cssPreprocessLangRE,
-          '$2'
-        ) as SFCAsyncStyleCompileOptions['preprocessLang']
+        const preprocessLang = (id.match(cssPreprocessLangRE) ||
+          [])[1] as SFCAsyncStyleCompileOptions['preprocessLang']
 
         const result = isVueStyle
           ? css
           : await compileCss(
-              resolver,
               root,
               id,
               {
@@ -125,7 +119,7 @@ export const createBuildCssPlugin = (
         styles.set(id, css)
         return {
           code: modules
-            ? `export default ${JSON.stringify(modules)}`
+            ? dataToEsm(modules, { namedExports: true })
             : (cssCodeSplit
                 ? // If code-splitting CSS, inject a fake marker to avoid the module
                   // from being tree-shaken. This preserves the .css file as a
@@ -133,7 +127,9 @@ export const createBuildCssPlugin = (
                   // renderChunk.
                   `${cssInjectionMarker}()\n`
                 : ``) + `export default ${JSON.stringify(css)}`,
-          map: null
+          map: null,
+          // #795 css always has side effect
+          moduleSideEffects: true
         }
       }
     },
@@ -150,7 +146,7 @@ export const createBuildCssPlugin = (
         code = code.replace(cssInjectionRE, '')
         // for each dynamic entry chunk, collect its css and inline it as JS
         // strings.
-        if (chunk.isDynamicEntry) {
+        if (chunk.isDynamicEntry && chunkCSS) {
           chunkCSS = minifyCSS(chunkCSS)
           code =
             `let ${cssInjectionMarker} = document.createElement('style');` +

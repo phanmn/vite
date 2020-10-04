@@ -2,18 +2,17 @@ import path from 'path'
 import postcssrc from 'postcss-load-config'
 import chalk from 'chalk'
 import { asyncReplace } from './transformUtils'
-import { isExternalUrl, resolveFrom, bareImportRE } from './pathUtils'
+import { isExternalUrl, resolveFrom } from './pathUtils'
 import { resolveCompiler } from './resolveVue'
 import hash_sum from 'hash-sum'
 import {
   SFCAsyncStyleCompileOptions,
   SFCStyleCompileResults
 } from '@vue/compiler-sfc'
-import { InternalResolver } from '../resolver'
 
 export const urlRE = /url\(\s*('[^']+'|"[^"]+"|[^'")]+)\s*\)/
-export const cssPreprocessLangRE = /(.+)\.(less|sass|scss|styl|stylus|postcss)$/
-export const cssModuleRE = /(.+)\.module\.(less|sass|scss|styl|stylus|postcss|css)$/
+export const cssPreprocessLangRE = /\.(less|sass|scss|styl|stylus|postcss)$/
+export const cssModuleRE = /\.module\.(less|sass|scss|styl|stylus|postcss|css)$/
 
 export const isCSSRequest = (file: string) =>
   file.endsWith('.css') || cssPreprocessLangRE.test(file)
@@ -53,7 +52,6 @@ export function rewriteCssUrls(
 }
 
 export async function compileCss(
-  resolver: InternalResolver,
   root: string,
   publicPath: string,
   {
@@ -86,7 +84,7 @@ export async function compileCss(
   const {
     options: postcssOptions,
     plugins: postcssPlugins
-  } = await resolvePostcssOptions(resolver, root, isBuild)
+  } = await resolvePostcssOptions(root, isBuild)
 
   if (preprocessLang) {
     preprocessOptions = preprocessOptions[preprocessLang] || preprocessOptions
@@ -96,21 +94,6 @@ export async function compileCss(
       case 'sass':
         preprocessOptions = {
           includePaths: ['node_modules'],
-          importer: [
-            (id: string) => {
-              if (id.startsWith('file://')) {
-                id = id.replace('file://', '')
-              }
-              if (isExternalUrl(id)) {
-                return { file: id }
-              }
-              id = resolver.alias(id) || id
-              if (id.startsWith('.') || bareImportRE.test(id)) {
-                return { file: id }
-              }
-              return { file: resolver.requestToFile(id) }
-            }
-          ],
           ...preprocessOptions
         }
         break
@@ -170,25 +153,11 @@ async function loadPostcssConfig(
   }
 }
 
-export async function resolvePostcssOptions(
-  resolver: InternalResolver,
-  root: string,
-  isBuild: boolean
-) {
+export async function resolvePostcssOptions(root: string, isBuild: boolean) {
   const config = await loadPostcssConfig(root)
   const options = config && config.options
-  const plugins = config ? config.plugins : []
-  plugins.unshift(
-    require('postcss-import')({
-      resolve: (id: string) => {
-        id = resolver.alias(id) || id
-        if (id.startsWith('.') || bareImportRE.test(id)) {
-          return id
-        }
-        return resolver.requestToFile(id)
-      }
-    })
-  )
+  const plugins = config && config.plugins ? config.plugins.slice() : []
+  plugins.unshift(require('postcss-import')())
   if (isBuild) {
     plugins.push(require('postcss-discard-comments')({ removeAll: true }))
   }
